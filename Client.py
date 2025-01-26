@@ -551,7 +551,6 @@ class Client:
 
         while self.state == GameState.STARTED:
 
-            print(self.game.clock.get_fps())
             self.game.clock.tick(max_fps)
 
             for event in pygame.event.get():
@@ -562,50 +561,49 @@ class Client:
                     if event.button == 3:
                         self.dragged_piece = None
                         self.dragged_piece_pos = None
-                    if event.button == 1:  # Left click
+                    if event.button == 1:
                         self.selected_squares.clear()
                         mouse_x, mouse_y = event.pos
                         if self.game is not None:
-                            # Check if clicking on a square
                             for square in self.game.squares.keys():
                                 if self.game.squares.get(square).collidepoint((mouse_x, mouse_y)):
                                     piece = self.game.get_piece_at(square)
                                     
-                                    if self.selected is None:  # No piece selected yet
-                                        # Select the piece if it matches the player's turn
-                                        if piece is not None and piece.color == self.game.next_move:
+                                    if self.selected is None:
+                                        if piece is not None and piece.color == self.game.next_move and self.client.color == self.game.next_move:
                                             self.selected = square
                                             self.dragged_piece = piece
                                             self.dragged_piece_pos = event.pos
-                                    else:  # A piece is already selected
-                                        # Attempt to move to the clicked square
+                                    else:
                                         selected_piece = self.game.get_piece_at(self.selected)
-                                        if selected_piece and selected_piece.can_move(square, self.game.one.pieces + self.game.two.pieces):
-                                            self.game.handle_move(
-                                                self.game.get_client(selected_piece.color),
-                                                selected_piece,
-                                                self.selected,
-                                                square
-                                            )
-                                            self.selected = None
-                                            self.dragged_piece = None
-                                            self.dragged_piece_pos = None
+                                        if square == self.selected:
+                                            self.dragged_piece = selected_piece
+                                            self.dragged_piece_pos = event.pos
                                         else:
-                                            # Invalid move, deselect
-                                            self.selected = None
-                                            self.dragged_piece = None
-                                            self.dragged_piece_pos = None
+                                            if selected_piece and selected_piece.can_move(square, self.game.one.pieces + self.game.two.pieces):
+                                                self.game.handle_move(
+                                                    self.game.get_client(selected_piece.color),
+                                                    selected_piece,
+                                                    self.selected,
+                                                    square
+                                                )
+                                                self.dragged_piece = None
+                                                self.dragged_piece_pos = None
+                                            else:
+                                                self.selected = None if self.game.get_piece_at(square) is None else self.game.get_piece_at(square).location
+                                                self.dragged_piece = None if self.game.get_piece_at(square) is None else self.game.get_piece_at(square)
+                                                self.dragged_piece_pos = None if self.game.get_piece_at(square) is None else (mouse_x, mouse_y)
 
                 if event.type == pygame.MOUSEMOTION:
                     if self.dragged_piece is not None:
-                        self.dragged_piece_pos = event.pos  # Update dragged piece position
+                        self.dragged_piece_pos = event.pos
 
                 if event.type == pygame.MOUSEBUTTONUP:
-                    if event.button == 1 and self.dragged_piece is not None:  # Left button release
+                    if event.button == 1 and self.dragged_piece is not None:
                         mouse_x, mouse_y = event.pos
                         for square in self.game.squares.keys():
                             if self.game.squares.get(square).collidepoint((mouse_x, mouse_y)):
-                                # Release the piece on the square if it's a valid move
+
                                 selected_piece = self.game.get_piece_at(self.selected)
                                 if selected_piece and selected_piece.can_move(square, self.game.one.pieces + self.game.two.pieces):
                                     self.game.handle_move(
@@ -614,13 +612,12 @@ class Client:
                                         self.selected,
                                         square
                                     )
-                                # Deselect in either case
-                                self.selected = None
+                                    self.selected = None
                                 self.dragged_piece = None
                                 self.dragged_piece_pos = None
                                 break
 
-                    if event.button == 3:  # Right button to toggle square selection
+                    if event.button == 3:
                         mouse_x, mouse_y = event.pos
                         if self.game is not None:
                             for square in self.game.squares.keys():
@@ -689,6 +686,10 @@ class Client:
 
                 pygame.draw.rect(self.screen, color, square_rect)
         
+                if square_rect.collidepoint(pygame.mouse.get_pos()) and self.dragged_piece is not None:
+                    # Create a slightly smaller rectangle for the inner border
+                    pygame.draw.rect(self.screen, "#cec3ba", square_rect, width=4)
+
                 if self.selected is not None and isinstance(self.selected, tuple):
                     piece = self.game.get_piece_at(self.selected)
                     if piece is not None:
