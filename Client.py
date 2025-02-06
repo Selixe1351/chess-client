@@ -61,46 +61,58 @@ class GamePiece:
         else:
             raise FileNotFoundError(f"Image for {self.color.name} {self.piece.name} not found.")
 
-    def get_possible_moves(self, game, board: dict) -> list:
+    def get_possible_moves(self, game, client, board: dict) -> list:
         possible_moves = []
         for row in range(8):
             for col in range(8):
-                if self.can_move(game, (row, col), board):
+                if self.can_move(game, client, (row, col), board):
                     possible_moves.append((row, col))
         return possible_moves
 
-    def can_move(self, game, new_pos: tuple, board: list) -> bool:
+    def can_move(self, game, client, new_pos: tuple, board: list) -> bool:
         new_row, new_col = new_pos
 
-        if game.one.color is not self.color:
+        if game.next_move is not self.color:
             return False
-
+        
+        if self.color is not client.color:
+            return False
+        
         if not (0 <= new_row < 8 and 0 <= new_col < 8):
             return False
 
-        # Convert board to dictionary for faster lookups
         board_dict = {piece.location: piece for piece in board}
 
         if self.piece == ChessPiece.PAWN:
-            return self._pawn_move(GameColor.WHITE, new_pos, board_dict)
+            return self._pawn_move(game, new_pos, board_dict)
         elif self.piece == ChessPiece.ROOK:
-            return self._rook_move(new_pos, board_dict)
+            return self._rook_move(game, new_pos, board_dict)
         elif self.piece == ChessPiece.BISHOP:
-            return self._bishop_move(new_pos, board_dict)
+            return self._bishop_move(game, new_pos, board_dict)
         elif self.piece == ChessPiece.KNIGHT:
-            return self._knight_move(new_pos, board_dict)
+            return self._knight_move(game, new_pos, board_dict)
         elif self.piece == ChessPiece.QUEEN:
-            return self._queen_move(new_pos, board_dict)
+            return self._queen_move(game, new_pos, board_dict)
         elif self.piece == ChessPiece.KING:
-            return self._king_move(new_pos, board_dict)
+            return self._king_move(game, new_pos, board_dict)
 
         return False
 
-    def _pawn_move(self, player_color: GameColor, new_pos, board):
+    def _pawn_move(self, game, new_pos, board):
         current_row, current_col = self.location
         new_row, new_col = new_pos
 
-        perspective_flipped = player_color == GameColor.BLACK
+        temp = game.board.copy()
+
+        from_square = chess.square(self.location[1], self.location[0])
+        to_square = chess.square(new_pos[1], new_pos[0])
+
+        move = chess.Move(from_square, to_square)
+
+        if temp.is_into_check(move):
+            return False
+
+        perspective_flipped = False
         if perspective_flipped:
             direction = -1 if self.color == GameColor.WHITE else 1
         else:
@@ -124,7 +136,7 @@ class GamePiece:
 
         return False
 
-    def _rook_move(self, new_pos, board):
+    def _rook_move(self, game, new_pos, board):
         current_row, current_col = self.location
         new_row, new_col = new_pos
 
@@ -145,10 +157,20 @@ class GamePiece:
 
         if (new_row, new_col) in board and board[(new_row, new_col)].color == self.color:
             return False
+        
+        temp = game.board.copy()
+
+        from_square = chess.square(self.location[1], self.location[0])
+        to_square = chess.square(new_pos[1], new_pos[0])
+
+        move = chess.Move(from_square, to_square)
+
+        if temp.is_into_check(move):
+            return False
 
         return True
 
-    def _bishop_move(self, new_pos: tuple, board: dict) -> bool:
+    def _bishop_move(self, game, new_pos: tuple, board: dict) -> bool:
         current_row, current_col = self.location
         new_row, new_col = new_pos
 
@@ -173,11 +195,21 @@ class GamePiece:
 
         if (new_row, new_col) in board and board[(new_row, new_col)].color == self.color:
             return False
+        
+        temp = game.board.copy()
+
+        from_square = chess.square(self.location[1], self.location[0])
+        to_square = chess.square(new_pos[1], new_pos[0])
+
+        move = chess.Move(from_square, to_square)
+
+        if temp.is_into_check(move):
+            return False
 
         return True
 
 
-    def _knight_move(self, new_pos, board):
+    def _knight_move(self, game, new_pos, board):
         current_row, current_col = self.location
         new_row, new_col = new_pos
 
@@ -187,12 +219,22 @@ class GamePiece:
         if (new_row, new_col) in board and board[(new_row, new_col)].color == self.color:
             return False
 
+        temp = game.board.copy()
+
+        from_square = chess.square(self.location[1], self.location[0])
+        to_square = chess.square(new_pos[1], new_pos[0])
+
+        move = chess.Move(from_square, to_square)
+
+        if temp.is_into_check(move):
+            return False
+
         return True
 
-    def _queen_move(self, new_pos, board):
-        return self._rook_move(new_pos, board) or self._bishop_move(new_pos, board)
+    def _queen_move(self, game, new_pos, board):
+        return self._rook_move(game, new_pos, board) or self._bishop_move(game, new_pos, board)
 
-    def _king_move(self, new_pos, board):
+    def _king_move(self, game, new_pos, board):
         current_row, current_col = self.location
         new_row, new_col = new_pos
 
@@ -202,8 +244,15 @@ class GamePiece:
         if (new_row, new_col) in board and board[(new_row, new_col)].color == self.color:
             return False
 
+        temp = game.board.copy()
 
+        from_square = chess.square(self.location[1], self.location[0])
+        to_square = chess.square(new_pos[1], new_pos[0])
 
+        move = chess.Move(from_square, to_square)
+
+        if temp.is_into_check(move):
+            return False
         return True
 
 class GameClient:
@@ -264,12 +313,9 @@ class AIGameClient(GameClient):
         super().__init__("Engine", -1)
 
     def get_stockfish_move(self, board: chess.Board):
-        """
-        Requests a move from Stockfish based on the current game board.
-        """
         with chess.engine.SimpleEngine.popen_uci(self.stockfish_path) as engine:
-            # Request the best move from Stockfish (with a time limit)
-            result = engine.play(board, chess.engine.Limit(time=2.0))  # Stockfish move with 2 seconds thinking time
+
+            result = engine.play(board, chess.engine.Limit(time=2.0))
             return result.move
 
 class Game:
@@ -360,7 +406,7 @@ class Game:
         return None
     
     def handle_move(self, client: GameClient, piece: GamePiece, old: tuple, new: tuple) -> str | None:
-        if not client.get_piece(old).can_move(self, new, self.one.pieces + self.two.pieces):
+        if not client.get_piece(old).can_move(self, client, new, self.one.pieces + self.two.pieces):
             return None
         
         if self.move_piece(client, old, new):
@@ -437,7 +483,7 @@ class Game:
                     from_row, from_col = chess.square_rank(from_square), chess.square_file(from_square)
                     to_row, to_col = chess.square_rank(to_square), chess.square_file(to_square)
 
-                    self.move_piece(client, (from_row, from_col), (to_row, to_col)) 
+                    self.move_piece(client, (from_row, from_col), (to_row, to_col))
 
     def capture_piece(self, piece: GamePiece):
         self.get_client(piece.color).pieces.remove(piece)
@@ -591,7 +637,7 @@ class Client:
 
                                     # Handle first-time selection
                                     if self.selected is None:
-                                        if piece is not None and piece.color == self.game.next_move:
+                                        if piece is not None:
                                             self.selected = square
                                             self.dragged_piece = piece
                                             self.dragged_piece_pos = event.pos
@@ -602,7 +648,7 @@ class Client:
                                             self.dragged_piece_pos = event.pos
                                         else:
                                             selected_piece = self.game.get_piece_at(self.selected)
-                                            if selected_piece and selected_piece.can_move(self.game, square, self.game.one.pieces + self.game.two.pieces):
+                                            if selected_piece and selected_piece.can_move(self.game, self.client, square, self.game.one.pieces + self.game.two.pieces):
                                                 # Handle valid move
                                                 self.game.handle_move(
                                                     self.game.get_client(selected_piece.color),
@@ -635,7 +681,7 @@ class Client:
                                     self.dragged_piece_pos = None
                                 elif self.selected is not None:
                                     selected_piece = self.game.get_piece_at(self.selected)
-                                    if selected_piece and selected_piece.can_move(self.game, square, self.game.one.pieces + self.game.two.pieces):
+                                    if selected_piece and selected_piece.can_move(self.game, self.client, square, self.game.one.pieces + self.game.two.pieces):
                                         # Handle valid move
                                         self.game.handle_move(
                                             self.game.get_client(selected_piece.color),
@@ -713,6 +759,9 @@ class Client:
                     if self.selected_squares.__contains__((reversed_row, col)):
                         color = "#d5604d"
 
+                if self.game.get_piece_at((reversed_row, col)) is not None and self.game.get_piece_at((reversed_row, col)).piece is ChessPiece.KING and self.game.board.is_check():
+                    color = "#ff1100"
+
                 square_x = board_x + col * square_size
                 square_y = board_y + row * square_size
                 square_rect = pygame.Rect(square_x, square_y, square_size, square_size)
@@ -721,12 +770,12 @@ class Client:
         
                 if square_rect.collidepoint(pygame.mouse.get_pos()) and self.dragged_piece is not None:
                     # Create a slightly smaller rectangle for the inner border
-                    pygame.draw.rect(self.screen, "#cec3ba", square_rect, width=4)
+                    pygame.draw.rect(self.screen, "#cec3ba", square_rect, width=6)
 
                 if self.selected is not None and isinstance(self.selected, tuple):
                     piece = self.game.get_piece_at(self.selected)
                     if piece is not None:
-                        if piece.can_move(self.game, (reversed_row, col), self.game.one.pieces + self.game.two.pieces):
+                        if piece.can_move(self.game, self.client, (reversed_row, col), self.game.one.pieces + self.game.two.pieces):
                             transparent_surface = pygame.Surface((square_size, square_size), pygame.SRCALPHA)
                             pygame.draw.circle(transparent_surface, (0, 0, 0, 50), (square_size // 2, square_size // 2), square_size // 6)
                             self.screen.blit(transparent_surface, (square_x, square_y))
