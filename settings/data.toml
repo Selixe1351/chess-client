@@ -1,6 +1,6 @@
 [display]
-screen_x = 1080
-screen_y = 720
+screen_x = 1920
+screen_y = 1080
 
 [quality]
 max_fps = -1 # -1 = UNLIMITED

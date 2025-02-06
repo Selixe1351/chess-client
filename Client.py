@@ -34,7 +34,16 @@ class GamePiece:
         self.color = color
         self.piece = piece
         self.location = location
+        self.new_location = None
 
+        self.image = self.load_image()
+
+        square_size = min(screen_size[0] // 10, screen_size[1] // 10)
+
+        self.image = pygame.transform.smoothscale(self.image, (square_size, square_size))
+
+    def update(self, piece: ChessPiece = ChessPiece.QUEEN):
+        self.piece = piece
         self.image = self.load_image()
 
         square_size = min(screen_size[0] // 10, screen_size[1] // 10)
@@ -52,16 +61,19 @@ class GamePiece:
         else:
             raise FileNotFoundError(f"Image for {self.color.name} {self.piece.name} not found.")
 
-    def get_possible_moves(self, board: dict) -> list:
+    def get_possible_moves(self, game, board: dict) -> list:
         possible_moves = []
         for row in range(8):
             for col in range(8):
-                if self.can_move((row, col), board):
+                if self.can_move(game, (row, col), board):
                     possible_moves.append((row, col))
         return possible_moves
 
-    def can_move(self, new_pos: tuple, board: list) -> bool:
+    def can_move(self, game, new_pos: tuple, board: list) -> bool:
         new_row, new_col = new_pos
+
+        if game.one.color is not self.color:
+            return False
 
         if not (0 <= new_row < 8 and 0 <= new_col < 8):
             return False
@@ -194,18 +206,18 @@ class GamePiece:
 
         return True
 
-
 class GameClient:
     def __init__(self, name: str, rating: int = 1000):
         self.id = uuid1
-        self.client = None
-        self.name = name
-        self.rating = rating
-        self.pieces = []
-        self.king_moved = False
-        self.left_rook_moved = False
-        self.right_rook_moved = False
-        self.color = None
+        self.client: Client = None
+        self.name: str = name
+        self.rating: int = rating
+        self.pieces: list[GamePiece] = []
+        self.promoting: list[GamePiece] = []
+        self.king_moved: bool = False
+        self.left_rook_moved: bool = False
+        self.right_rook_moved: bool = False
+        self.color: GameColor = None
 
     def set_client(self, client):
         self.client = client
@@ -249,7 +261,7 @@ class AIGameClient(GameClient):
         self.difficulty = 20
         self.stockfish_path = "engine\stockfish-windows-x86-64.exe"
 
-        super().__init__("Engine", 3000)
+        super().__init__("Engine", -1)
 
     def get_stockfish_move(self, board: chess.Board):
         """
@@ -348,12 +360,11 @@ class Game:
         return None
     
     def handle_move(self, client: GameClient, piece: GamePiece, old: tuple, new: tuple) -> str | None:
-        if not client.get_piece(old).can_move(new, self.one.pieces + self.two.pieces):
+        if not client.get_piece(old).can_move(self, new, self.one.pieces + self.two.pieces):
             return None
         
-        self.move_piece(client, old, new)
-        
-        self.run_ai_move_async(client, piece, old, new)
+        if self.move_piece(client, old, new):
+            self.run_ai_move_async(client, piece, old, new)
     
     def run_async(self, func, *args):
         loop = asyncio.new_event_loop()
@@ -372,6 +383,11 @@ class Game:
 
                 if old[0] == 7:
                     self.get_client(piece.color).right_rook_moved = True
+
+            if (new[0] == 0 or new[0] == 7) and piece.piece == ChessPiece.PAWN:
+                piece.new_location = new
+                client.client.promoting.append(piece)
+                return False
 
             captured_piece = self.get_piece_at(new)
             if captured_piece is not None and captured_piece.color != piece.color:
@@ -400,6 +416,8 @@ class Game:
                 client.play_sound("move-capture.mp3")
             else:
                 client.play_sound("move-self.mp3")
+
+            return True
 
     def run_ai_move_async(self, client: GameClient, piece: GamePiece, old: tuple, new: tuple):
         ai_thread = threading.Thread(target=self.handle_ai_move, args=(client, piece, old, new))
@@ -478,22 +496,23 @@ class Client:
         self.audios = {}
 
         self.load()
-        self.name = None
-        self.client = None
-        self.game = None
-        self.arrows = []
-        self.selected_squares = []
-        self.selected = None
-        self.dragged_piece = None
-        self.dragged_piece_pos = None
-        self.state = GameState.WAITING
-        self.current_cursor = pygame.SYSTEM_CURSOR_ARROW
+        self.name: str = None
+        self.client: GameClient = None
+        self.game: Game = None
+        self.arrows: dict[tuple, tuple] = {}
+        self.selected_squares: list[tuple] = []
+        self.selected: tuple = None
+        self.promoting: list[GamePiece] = []
+        self.dragged_piece: GamePiece = None
+        self.dragged_piece_pos: tuple = None
+        self.state: GameState = GameState.WAITING
+        self.current_cursor: int = pygame.SYSTEM_CURSOR_ARROW
 
         flags = pygame.DOUBLEBUF
 
-        self.screen = pygame.display.set_mode(screen_size, flags, 16)
-        self.primary_font = pygame.font.Font(None, 24)
-        self.secondary_font = pygame.font.Font(None, 16)
+        self.screen: pygame.Surface = pygame.display.set_mode(screen_size, flags, 16)
+        self.primary_font: pygame.font.Font = pygame.font.Font(None, 24)
+        self.secondary_font: pygame.font.Font = pygame.font.Font(None, 16)
 
     def load(self):
         pygame.init()
@@ -558,38 +577,44 @@ class Client:
                     self.state = GameState.QUIT
 
                 if event.type == pygame.MOUSEBUTTONDOWN:
-                    if event.button == 3:
+                    if event.button == 3:  # Right-click logic
                         self.dragged_piece = None
                         self.dragged_piece_pos = None
-                    if event.button == 1:
+
+                    if event.button == 1:  # Left-click logic
                         self.selected_squares.clear()
                         mouse_x, mouse_y = event.pos
                         if self.game is not None:
                             for square in self.game.squares.keys():
                                 if self.game.squares.get(square).collidepoint((mouse_x, mouse_y)):
                                     piece = self.game.get_piece_at(square)
-                                    
+
+                                    # Handle first-time selection
                                     if self.selected is None:
-                                        if piece is not None and piece.color == self.game.next_move and self.client.color == self.game.next_move:
+                                        if piece is not None and piece.color == self.game.next_move:
                                             self.selected = square
                                             self.dragged_piece = piece
                                             self.dragged_piece_pos = event.pos
                                     else:
-                                        selected_piece = self.game.get_piece_at(self.selected)
+                                        # Prepare for deselection or move logic
                                         if square == self.selected:
-                                            self.dragged_piece = selected_piece
+                                            self.dragged_piece = piece
                                             self.dragged_piece_pos = event.pos
                                         else:
-                                            if selected_piece and selected_piece.can_move(square, self.game.one.pieces + self.game.two.pieces):
+                                            selected_piece = self.game.get_piece_at(self.selected)
+                                            if selected_piece and selected_piece.can_move(self.game, square, self.game.one.pieces + self.game.two.pieces):
+                                                # Handle valid move
                                                 self.game.handle_move(
                                                     self.game.get_client(selected_piece.color),
                                                     selected_piece,
                                                     self.selected,
                                                     square
                                                 )
+                                                self.selected = None
                                                 self.dragged_piece = None
                                                 self.dragged_piece_pos = None
                                             else:
+                                                # Change selection to a new square
                                                 self.selected = None if self.game.get_piece_at(square) is None else self.game.get_piece_at(square).location
                                                 self.dragged_piece = None if self.game.get_piece_at(square) is None else self.game.get_piece_at(square)
                                                 self.dragged_piece_pos = None if self.game.get_piece_at(square) is None else (mouse_x, mouse_y)
@@ -603,19 +628,24 @@ class Client:
                         mouse_x, mouse_y = event.pos
                         for square in self.game.squares.keys():
                             if self.game.squares.get(square).collidepoint((mouse_x, mouse_y)):
-
-                                selected_piece = self.game.get_piece_at(self.selected)
-                                if selected_piece and selected_piece.can_move(square, self.game.one.pieces + self.game.two.pieces):
-                                    self.game.handle_move(
-                                        self.game.get_client(selected_piece.color),
-                                        selected_piece,
-                                        self.selected,
-                                        square
-                                    )
+                                # Deselect only on subsequent clicks (not the first time)
+                                if self.selected == square:
                                     self.selected = None
-                                self.dragged_piece = None
-                                self.dragged_piece_pos = None
-                                break
+                                    self.dragged_piece = None
+                                    self.dragged_piece_pos = None
+                                elif self.selected is not None:
+                                    selected_piece = self.game.get_piece_at(self.selected)
+                                    if selected_piece and selected_piece.can_move(self.game, square, self.game.one.pieces + self.game.two.pieces):
+                                        # Handle valid move
+                                        self.game.handle_move(
+                                            self.game.get_client(selected_piece.color),
+                                            selected_piece,
+                                            self.selected,
+                                            square
+                                        )
+                                        self.selected = None
+                                    self.dragged_piece = None
+                                    self.dragged_piece_pos = None
 
                     if event.button == 3:
                         mouse_x, mouse_y = event.pos
@@ -626,7 +656,6 @@ class Client:
                                         self.selected_squares.remove(square)
                                     else:
                                         self.selected_squares.append(square)
-
 
             self.draw_board()
             self.draw_controls()
@@ -659,16 +688,10 @@ class Client:
 
                 if (reversed_row + col) % 2 == 0:
                     # White square
-                    if self.selected_squares.__contains__((reversed_row, col)):
-                        color = "#e26f5a"
-                    else:
-                        color = "#ba9f7a"
+                    color = "#ba9f7a"
                 else:
                     # Black square
-                    if self.selected_squares.__contains__((reversed_row, col)):
-                        color = "#d5604d"
-                    else:
-                        color = "#6f5038"
+                    color = "#6f5038"
 
 
                 if self.selected is not None and self.selected == (reversed_row, col):
@@ -679,6 +702,16 @@ class Client:
 
                 if self.game.last == (reversed_row, col):
                     color = "#c7a355"
+
+                if (reversed_row + col) % 2 == 0:
+                    # White square
+                    if self.selected_squares.__contains__((reversed_row, col)):
+                        color = "#e26f5a"
+
+                else:
+                    # Black Square
+                    if self.selected_squares.__contains__((reversed_row, col)):
+                        color = "#d5604d"
 
                 square_x = board_x + col * square_size
                 square_y = board_y + row * square_size
@@ -693,7 +726,7 @@ class Client:
                 if self.selected is not None and isinstance(self.selected, tuple):
                     piece = self.game.get_piece_at(self.selected)
                     if piece is not None:
-                        if piece.can_move((reversed_row, col), self.game.one.pieces + self.game.two.pieces):
+                        if piece.can_move(self.game, (reversed_row, col), self.game.one.pieces + self.game.two.pieces):
                             transparent_surface = pygame.Surface((square_size, square_size), pygame.SRCALPHA)
                             pygame.draw.circle(transparent_surface, (0, 0, 0, 50), (square_size // 2, square_size // 2), square_size // 6)
                             self.screen.blit(transparent_surface, (square_x, square_y))
@@ -701,22 +734,47 @@ class Client:
                 if self.game is not None:
                     self.game.squares[(reversed_row, col)] = square_rect
 
+                center_x = square_x + square_size // 2
+                center_y = square_y + square_size // 2
+
                 for piece in self.game.one.pieces + self.game.two.pieces:
                     if piece.location == (reversed_row, col): 
 
                         scaled_rect = piece.image.get_rect()
 
-                        center_x = square_x + square_size // 2
-                        center_y = square_y + square_size // 2
-
                         offset_x = center_x - scaled_rect.width // 2
                         offset_y = center_y - scaled_rect.height // 2
 
                         if self.dragged_piece is not None and self.dragged_piece.location == (reversed_row, col):
-                            offset_x = self.dragged_piece_pos[0] - scaled_rect.width // 2
-                            offset_y = self.dragged_piece_pos[1] - scaled_rect.height // 2
+                            continue
 
                         self.screen.blit(piece.image, (offset_x, offset_y))
+
+        if self.dragged_piece is not None:
+            offset_x = self.dragged_piece_pos[0] - scaled_rect.width // 2
+            offset_y = self.dragged_piece_pos[1] - scaled_rect.height // 2
+
+            self.screen.blit(self.dragged_piece.image, (offset_x, offset_y))
+
+        for promoting in self.promoting:
+            if promoting.new_location is None:
+                continue
+            square_x = board_x + promoting.new_location[1] * square_size
+            square_y = board_y + promoting.new_location[0] * square_size
+            square_rect = pygame.Rect(square_x, square_y, square_size, square_size)
+
+            pygame.draw.rect(self.screen, "#ffffff", square_rect)
+
+            center_x = square_x + square_size // 2
+            center_y = square_y + square_size // 2
+
+            offset_x = center_x - scaled_rect.width // 2
+            offset_y = center_y - scaled_rect.height // 2
+
+            if self.dragged_piece is not None and self.dragged_piece.location == promoting.location:
+                continue
+
+            self.screen.blit(piece.image, (offset_x, offset_y))
 
         self.render_names(board_x, board_y, square_size)
 
